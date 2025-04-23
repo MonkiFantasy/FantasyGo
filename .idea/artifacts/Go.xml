@@ -1,0 +1,21 @@
+<component name="ArtifactManager">
+  <artifact type="javafx" name="Go">
+    <output-path>$PROJECT_DIR$/out/artifacts/Go</output-path>
+    <properties id="javafx-properties">
+      <options>
+        <option name="appClass" value="com.monki.Main" />
+        <option name="description" value="" />
+        <option name="htmlPlaceholderId" value="" />
+        <option name="nativeBundle" value="deb" />
+        <option name="title" value="" />
+        <option name="vendor" value="" />
+        <option name="version" value="" />
+      </options>
+    </properties>
+    <root id="root">
+      <element id="archive" name="Go.jar">
+        <element id="module-output" name="Go" />
+      </element>
+    </root>
+  </artifact>
+</component>
