@@ -35,6 +35,7 @@ public class MyPanel extends JPanel {
     public static List<Stone> fallOn = new ArrayList<>();//已落子的信息
     public static int turn = -1;//-1黑 1白
     public static int count = 1;//对弈手数
+    public static Stone lastStone = null; // 记录最后一颗落子，用于焦点绘制
     //Logger logger =Logger.getLogger("panel");
     //private Board board= new Board();
     //private static Stone[][] stones=Board.stones;//存放棋盘上落得子
@@ -84,18 +85,15 @@ public class MyPanel extends JPanel {
             for (Stone stone : fallOn) {
                 if (!stone.getRemoved()) {
                     myPaint.drawStone(g, stone);
-                    //落子焦点
-                    if(stone.getCount()==(fallOn.size())){
+                    
+                    // 修改落子焦点绘制逻辑，解决网络模式下的焦点显示问题
+                    // 焦点显示在最后一颗棋子上，无论是本地落下的还是从网络接收的
+                    if (lastStone != null && stone.getCount() == lastStone.getCount()) {
                         int i = stone.getCoordinate().getI();
                         int j = stone.getCoordinate().getJ();
-                        //g.setColor(Color.BLUE);
-                        g.setColor(stone.getColor().equals(Color.WHITE)?Color.BLACK:Color.WHITE);
-                        g.fillPolygon(new int[]{i,i,i+Config.SPACE/2},new int[]{j,j+Config.SPACE/2,j}, 3);
-                        //g.fillOval(stone.getCoordinate().getI()-Config.SPACE/8,stone.getCoordinate().getJ()-Config.SPACE/8,SPACE/4,SPACE/4);
+                        g.setColor(stone.getColor().equals(Color.WHITE) ? Color.BLACK : Color.WHITE);
+                        g.fillPolygon(new int[]{i, i, i+Config.SPACE/2}, new int[]{j, j+Config.SPACE/2, j}, 3);
                     }
-                    //绘制手数
-                    //g.setColor(stone.getColor().equals(Color.WHITE)?Color.BLACK:Color.WHITE);
-                    //g.drawString(String.valueOf(stone.getCount()), stone.getCoordinate().getI()-Config.SPACE/8,stone.getCoordinate().getJ()+Config.SPACE/8);
                 }
             }
         }
@@ -217,6 +215,9 @@ public class MyPanel extends JPanel {
                 }
                 fallOn.set(stone.getCount() - 1, stone);
             }
+            
+            // 10. 更新最后一颗落子引用，用于焦点绘制
+            lastStone = stone;
             
         } catch (Exception e) {
             System.out.println("棋盘更新出错: " + e.getMessage());
@@ -591,6 +592,9 @@ public class MyPanel extends JPanel {
         // 重置轮次和手数
         turn = -1; // 重置为黑方先行
         count = 1; // 重置手数
+        
+        // 重置最后落子引用
+        lastStone = null;
         
         // 清空棋盘状态
         for (int i = 0; i <= Config.PATH; i++) {
