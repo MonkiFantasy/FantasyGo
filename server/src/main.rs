@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use std::io::IoSlice;
 use rand::{thread_rng, Rng};
+use net2::TcpBuilder;
 
 // 定义棋子结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,45 +110,44 @@ impl GameServer {
         false
     }
     
-    // 处理落子消息 - 优化版
+    // 处理落子消息 - 极低延迟版
     async fn process_move(&mut self, player_id: &str, stone: Stone) -> bool {
-        // 简化日志，只输出必要信息
-        println!("落子: {} ({},{})", stone.color, stone.index.i, stone.index.j);
+        // 简化日志，完全移除非必要输出
+        // println!("落子: {} ({},{})", stone.color, stone.index.i, stone.index.j);
         
-        // 快速获取房间ID - 使用引用避免克隆
+        // 快速获取房间ID - 不做额外检查
         let room_id = match self.players.get(player_id).and_then(|p| p.room_id.as_ref()) {
             Some(id) => id,
             None => return false,
         };
         
-        // 获取房间引用 - 使用值引用避免HashMap查找开销
+        // 获取房间引用
         let room = match self.rooms.get_mut(room_id) {
             Some(r) => r,
             None => return false,
         };
         
-        // 记录落子 - 使用clone而不是引用
+        // 记录落子
         room.moves.push(stone.clone());
         // 更换轮次
         room.turn = -room.turn;
         
-        // 立即广播游戏状态
-        let broadcast_result = self.broadcast_game_state(room_id, &stone).await;
-        if let Err(e) = broadcast_result {
-            println!("广播失败: {}", e);
+        // 直接广播，减少开销
+        if let Err(_) = self.broadcast_game_state(room_id, &stone).await {
+            // 广播失败但继续处理
         }
         
         true
     }
     
-    // 广播游戏状态 - 高性能版
+    // 广播游戏状态 - 极低延迟版
     async fn broadcast_game_state(&self, room_id: &str, stone: &Stone) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let room = match self.rooms.get(room_id) {
             Some(r) => r,
             None => return Err("Room not found".into()),
         };
         
-        // 预先序列化消息一次 - 避免为每个玩家重复序列化
+        // 预先序列化消息一次，确保最小的克隆操作
         let move_message = GameMessage::Move { 
             networkStone: stone.clone() 
         };
@@ -157,7 +157,7 @@ impl GameServer {
         let len_bytes = len.to_be_bytes();
         
         // 并行发送消息给玩家
-        let mut send_tasks = Vec::new();
+        let mut send_tasks = Vec::with_capacity(2); // 预分配空间，避免动态扩容
         
         // 发送给黑方玩家
         if let Some(black_id) = &room.player_black {
@@ -183,7 +183,7 @@ impl GameServer {
         if let Some(white_id) = &room.player_white {
             if let Some(player) = self.players.get(white_id) {
                 let player_stream = Arc::clone(&player.stream);
-                let len_bytes_clone = len_bytes.clone();
+                let len_bytes_clone = len_bytes;
                 let msg_bytes_clone = msg_bytes.to_vec();
                 
                 let task = tokio::spawn(async move {
@@ -199,13 +199,12 @@ impl GameServer {
             }
         }
         
-        // 等待所有发送任务完成 - 但有超时限制
+        // 超短超时时间，优先继续处理而不等待
         for task in send_tasks {
-            match tokio::time::timeout(tokio::time::Duration::from_millis(100), task).await {
+            match tokio::time::timeout(tokio::time::Duration::from_millis(50), task).await {
                 Ok(_) => {}, // 任务正常完成
                 Err(_) => {
-                    // 任务超时但继续处理
-                    println!("消息发送超时");
+                    // 任务超时但继续处理，不打印日志
                 }
             }
         }
@@ -339,7 +338,15 @@ async fn handle_client(stream: TcpStream, server: Arc<Mutex<GameServer>>) {
 
 // 处理客户端消息
 async fn process_client_message(server: Arc<Mutex<GameServer>>, player_id: &str, message: GameMessage) {
-    // 尽量减少锁的持有时间，只在必要的时候获取锁
+    // 对落子消息使用快速路径处理
+    if let GameMessage::Move { networkStone } = &message {
+        let mut server_guard = server.lock().await;
+        // 直接处理落子，不等待结果
+        let _ = server_guard.process_move(player_id, networkStone.clone()).await;
+        return; // 立即返回，不处理其他逻辑
+    }
+    
+    // 对其他消息类型使用原有逻辑
     match &message {
         GameMessage::CreateRoom { roomId } => {
             let final_room_id;
@@ -396,17 +403,10 @@ async fn process_client_message(server: Arc<Mutex<GameServer>>, player_id: &str,
             }
         }
         
-        GameMessage::Move { networkStone } => {
-            let mut server_guard = server.lock().await;
-            // 使用快速路径处理落子消息
-            let _ = server_guard.process_move(player_id, networkStone.clone()).await;
-            // 不等待落子处理完成，立即返回
-        }
-        
         GameMessage::Heartbeat { roomId } => {
-            // 心跳消息只在需要时响应
+            // 心跳消息只在非空房间ID时响应，减少不必要的锁获取
             if !roomId.is_empty() {
-                let mut server_guard = server.lock().await;
+                let server_guard = server.lock().await;
                 if let Some(player) = server_guard.players.get(player_id) {
                     let response = GameMessage::Heartbeat { roomId: roomId.clone() };
                     let _ = server_guard.send_message(player, response).await;
@@ -415,7 +415,7 @@ async fn process_client_message(server: Arc<Mutex<GameServer>>, player_id: &str,
         }
         
         _ => {
-            // 其他消息类型忽略
+            // 忽略其他消息类型
         }
     }
 }
@@ -452,15 +452,49 @@ async fn main() {
     // 初始化服务器状态
     let server = Arc::new(Mutex::new(GameServer::new()));
     
-    // 设置监听地址
-    let addr = "0.0.0.0:8080";
+    // 设置监听地址 - 允许本地连接
+    let addr = "0.0.0.0:11434";
     println!("围棋服务器启动，监听: {}", addr);
     
-    // 创建TCP监听器
-    let listener = match TcpListener::bind(addr).await {
-        Ok(listener) => listener,
+    // 创建TCP监听器，带优化选项
+    let builder = match TcpBuilder::new_v4() {
+        Ok(b) => b,
         Err(e) => {
-            eprintln!("无法绑定到地址 {}: {}", addr, e);
+            eprintln!("创建TCP构建器失败: {}", e);
+            return;
+        }
+    };
+    
+    // 设置Socket选项
+    if let Err(e) = builder.reuse_address(true) {
+        eprintln!("设置地址重用选项失败: {}", e);
+    }
+    
+    // 绑定地址
+    if let Err(e) = builder.bind(addr) {
+        eprintln!("绑定地址失败: {}", e);
+        return;
+    }
+    
+    // 转换为标准监听器
+    let socket = match builder.listen(1024) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("创建监听器失败: {}", e);
+            return;
+        }
+    };
+    
+    // 设置为非阻塞模式
+    if let Err(e) = socket.set_nonblocking(true) {
+        eprintln!("设置非阻塞模式失败: {}", e);
+    }
+    
+    // 从标准TcpListener创建tokio TcpListener
+    let listener = match tokio::net::TcpListener::from_std(socket) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("创建tokio监听器失败: {}", e);
             return;
         }
     };
@@ -469,6 +503,9 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
+                // 为新连接设置最佳性能选项
+                if let Err(_) = stream.set_nodelay(true) { }
+                
                 println!("接受新连接: {}", addr);
                 
                 // 为每个新连接创建一个任务
@@ -480,8 +517,8 @@ async fn main() {
             }
             Err(e) => {
                 eprintln!("接受连接错误: {}", e);
-                // 短暂暂停以避免CPU占用过高
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                // 更短的暂停
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
         }
     }

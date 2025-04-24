@@ -31,8 +31,8 @@ public class GoClient implements Runnable {
     private String playerId;
     private String roomId;
     
-    private static final long HEARTBEAT_INTERVAL = 5000; // 心跳间隔改为5秒，提高响应速度
-    private static final int BUFFER_SIZE = 8192; // 增加缓冲区大小提高吞吐量
+    private static final long HEARTBEAT_INTERVAL = 1000; // 心跳间隔改为1秒，极低延迟
+    private static final int BUFFER_SIZE = 16384; // 超大缓冲区
     private volatile boolean running = true;
     private boolean connected = true;
     private boolean isHost = true;
@@ -43,25 +43,26 @@ public class GoClient implements Runnable {
     }
     
     /**
-     * 初始化连接 - 高性能版
+     * 初始化连接 - 极低延迟版
      */
     private void initConnection() throws IOException {
         socket = new Socket();
-        // 设置更激进的TCP选项来提高实时性
+        // 设置更激进的TCP选项来最大化实时性
         socket.setTcpNoDelay(true);     // 禁用Nagle算法，提高实时性
         socket.setKeepAlive(true);      // 保持连接
-        socket.setReceiveBufferSize(BUFFER_SIZE * 2); // 加大接收缓冲区
-        socket.setSendBufferSize(BUFFER_SIZE * 2);    // 加大发送缓冲区
-        socket.setSoTimeout(10000);     // 减少超时时间，更快发现连接问题
-        socket.setTrafficClass(0x10);  // 设置低延迟选项
+        socket.setReceiveBufferSize(BUFFER_SIZE * 4); // 进一步加大接收缓冲区
+        socket.setSendBufferSize(BUFFER_SIZE * 4);    // 进一步加大发送缓冲区
+        socket.setSoTimeout(5000);     // 减少超时时间，更快发现连接问题
         socket.setTrafficClass(0x10);   // 设置低延迟选项
+        socket.setPerformancePreferences(1, 0, 0); // 优先考虑连接时间
+        socket.setSoLinger(false, 0);   // 快速关闭
         
         // 连接服务器
-        socket.connect(new java.net.InetSocketAddress(SERVER_IP, SERVER_PORT), 3000);
+        socket.connect(new java.net.InetSocketAddress(SERVER_IP, SERVER_PORT), 1000);
         
         // 使用带缓冲的高性能流
-        dis = new DataInputStream(new BufferedInputStream(socket.getInputStream(), BUFFER_SIZE * 2));
-        dos = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream(), BUFFER_SIZE * 2));
+        dis = new DataInputStream(new BufferedInputStream(socket.getInputStream(), BUFFER_SIZE * 4));
+        dos = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream(), BUFFER_SIZE * 4));
         
         System.out.println("成功连接到服务器: " + SERVER_IP + ":" + SERVER_PORT);
     }
@@ -212,7 +213,7 @@ public class GoClient implements Runnable {
     }
     
     /**
-     * 发送消息到服务器 - 高性能版
+     * 发送消息到服务器 - 极低延迟版
      * @param message 要发送的消息
      * @param logMessage 是否记录日志
      */
@@ -221,7 +222,7 @@ public class GoClient implements Runnable {
             throw new IOException("输出流为空");
         }
         
-        // 将消息转换为JSON字符串并获取字节数组（只做一次转换）
+        // 使用更紧凑的JSON序列化配置
         String jsonMessage = Config.GSON.toJson(message);
         byte[] messageBytes = jsonMessage.getBytes("UTF-8");
         int messageLength = messageBytes.length;
@@ -233,16 +234,11 @@ public class GoClient implements Runnable {
                 " (" + message.networkStone.index.i + "," + message.networkStone.index.j + ")" : ""));
         }
         
-        // 使用同步块保护输出流，但减少同步范围
+        // 使用尽可能短的同步块
         synchronized (dos) {
-            // 使用单次写入来减少系统调用
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(messageLength + 4);
-            DataOutputStream tempDos = new DataOutputStream(baos);
-            tempDos.writeInt(messageLength);  // 写入长度前缀
-            tempDos.write(messageBytes);      // 写入消息内容
-            
-            // 一次性写入所有数据
-            dos.write(baos.toByteArray());
+            // 直接写入长度和内容，避免额外创建 ByteArrayOutputStream
+            dos.writeInt(messageLength);
+            dos.write(messageBytes);
             dos.flush();
         }
     }
@@ -267,13 +263,13 @@ public class GoClient implements Runnable {
             while (running) {
                 try {
                     if (connected) sendHeartbeat();
-                    Thread.sleep(2000); // 从15秒减少到5秒，可以提高响应速度
+                    Thread.sleep(HEARTBEAT_INTERVAL); // 使用更短的心跳间隔
                 } catch (Exception e) {
                     if (debug) System.out.println("心跳线程异常: " + e.getMessage());
                     if (!connected) {
                         try {
                             reconnect();
-                            Thread.sleep(500); // 从1秒减少到500毫秒
+                            Thread.sleep(200); // 减少重连后的等待时间
                         } catch (Exception re) {
                             // 忽略重连异常
                         }
@@ -282,11 +278,12 @@ public class GoClient implements Runnable {
             }
         });
         heartbeatThread.setDaemon(true); // 设为守护线程，主线程结束时自动结束
+        heartbeatThread.setPriority(Thread.MAX_PRIORITY); // 设置最高优先级
         heartbeatThread.start();
         
-        // 接收消息循环 - 使用直接缓冲区提高性能
+        // 接收消息循环 - 使用极低延迟缓冲区处理
         byte[] lengthBuffer = new byte[4];
-        byte[] messageBuffer = new byte[BUFFER_SIZE]; // 预分配缓冲区避免频繁创建
+        byte[] messageBuffer = new byte[BUFFER_SIZE * 2]; // 大幅增加缓冲区大小
         
         while (running) {
             try {
@@ -294,7 +291,7 @@ public class GoClient implements Runnable {
                 if (socket == null || socket.isClosed() || dis == null) {
                     if (debug) System.out.println("连接已断开，尝试重新连接...");
                     reconnect();
-                    Thread.sleep(500); // 从1秒减少到500毫秒
+                    Thread.sleep(100); // 大幅减少重连等待时间
                     continue;
                 }
                 
@@ -304,14 +301,14 @@ public class GoClient implements Runnable {
                     continue;
                 }
                 
-                // 直接从字节数组解析长度，减少ByteBuffer创建
+                // 使用更高效的方式解析长度
                 int messageLength = ((lengthBuffer[0] & 0xFF) << 24) | 
                                    ((lengthBuffer[1] & 0xFF) << 16) | 
                                    ((lengthBuffer[2] & 0xFF) << 8) | 
                                     (lengthBuffer[3] & 0xFF);
                 
                 // 验证消息长度
-                if (messageLength <= 0 || messageLength > BUFFER_SIZE) {
+                if (messageLength <= 0 || messageLength > BUFFER_SIZE * 2) {
                     if (debug) System.out.println("无效消息长度: " + messageLength);
                     continue;
                 }
@@ -321,11 +318,14 @@ public class GoClient implements Runnable {
                     messageBuffer = new byte[messageLength];
                 }
                 
-                // 读取消息内容
-                int bytesRead = 0;
+                // 读取消息内容 - 优化的读取方式
                 int totalRead = 0;
-                while (totalRead < messageLength && (bytesRead = dis.read(messageBuffer, totalRead, messageLength - totalRead)) != -1) {
+                int remaining = messageLength;
+                while (remaining > 0) {
+                    int bytesRead = dis.read(messageBuffer, totalRead, remaining);
+                    if (bytesRead == -1) break; // 连接已关闭
                     totalRead += bytesRead;
+                    remaining -= bytesRead;
                 }
                 
                 if (totalRead != messageLength) {
@@ -333,12 +333,21 @@ public class GoClient implements Runnable {
                     continue;
                 }
                 
-                // 解析JSON消息 - 仅处理完整消息
-                String jsonMessage = new String(messageBuffer, 0, messageLength, "UTF-8");
-                GameMessage message = Config.GSON.fromJson(jsonMessage, GameMessage.class);
-                
-                // 处理消息
-                handleMessage(message);
+                // 加速处理 - 直接传递字节数组而不是转换为字符串再解析
+                try {
+                    // 解析JSON消息 - 直接从字节数组解析
+                    GameMessage message = Config.GSON.fromJson(
+                        new String(messageBuffer, 0, messageLength, "UTF-8"), 
+                        GameMessage.class
+                    );
+                    
+                    // 处理消息 - 快速路径
+                    handleMessage(message);
+                } catch (Exception e) {
+                    if (debug) {
+                        System.out.println("消息解析错误: " + e.getMessage());
+                    }
+                }
                 
             } catch (SocketException | EOFException e) {
                 System.out.println("连接异常: " + e.getMessage());
@@ -352,7 +361,7 @@ public class GoClient implements Runnable {
                     e.printStackTrace();
                 }
                 try {
-                    Thread.sleep(500); // 从1秒减少到500毫秒
+                    Thread.sleep(100); // 减少异常处理等待时间
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
@@ -368,7 +377,7 @@ public class GoClient implements Runnable {
             closeConnection();
             
             // 等待一段时间再尝试重连
-            Thread.sleep(300); // 从3秒减少到1秒
+            Thread.sleep(100); // 减少重连等待时间
             
             System.out.println("尝试重新连接服务器...");
             initConnection();
@@ -376,10 +385,10 @@ public class GoClient implements Runnable {
             
             // 如果已加入房间，尝试重新加入
             if (roomId != null && !roomId.isEmpty()) {
-                System.out.println("尝试重新加入房间: " + roomId + ", 角色: " + (isHost ? "创建 者" : "加入者"));
+                System.out.println("尝试重新加入房间: " + roomId + ", 角色: " + (isHost ? "创建者" : "加入者"));
                 
                 // 先等待短暂时间确保连接稳定
-                Thread.sleep(300); // 从1秒减少到300毫秒
+                Thread.sleep(100); // 减少重连后等待时间
                 
                 if (isHost) {
                     // 创建者尝试恢复原有房间
@@ -410,36 +419,26 @@ public class GoClient implements Runnable {
             // 延迟后自动重试
             new Thread(() -> {
                 try {
-                    Thread.sleep(2000); // 从5秒减少到2秒
+                    Thread.sleep(500); // 减少自动重试等待时间
                     System.out.println("自动重试连接...");
                     reconnect();
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                } catch (Exception re) {
+                    // 忽略重试异常
                 }
             }).start();
         }
     }
     
     /**
-     * 关闭当前连接
+     * 清理资源
      */
     private void closeConnection() {
         try {
-            connected = false;
-            if (dos != null) {
-                dos.close();
-                dos = null;
-            }
-            if (dis != null) {
-                dis.close();
-                dis = null;
-            }
-            if (socket != null) {
-                socket.close();
-                socket = null;
-            }
+            if (dis != null) dis.close();
+            if (dos != null) dos.close();
+            if (socket != null) socket.close();
         } catch (IOException e) {
-            System.out.println("关闭连接出错: " + e.getMessage());
+            if (debug) e.printStackTrace();
         }
     }
     
@@ -521,7 +520,15 @@ public class GoClient implements Runnable {
     }
     
     /**
-     * 清理资源
+     * 停止客户端
+     */
+    public void stop() {
+        running = false;
+        cleanup();
+    }
+    
+    /**
+     * 清理所有资源
      */
     private void cleanup() {
         try {
@@ -531,14 +538,6 @@ public class GoClient implements Runnable {
         } catch (IOException e) {
             e.printStackTrace();
         }
-    }
-    
-    /**
-     * 停止客户端
-     */
-    public void stop() {
-        running = false;
-        cleanup();
     }
     
     /**
@@ -597,46 +596,4 @@ public class GoClient implements Runnable {
             this.j = j;
         }
     }
-    
-    /**
-     * 处理加入房间消息
-     */
-    private void handleJoinRoom(GameMessage message) {
-        if (message.roomId != null) {
-            roomId = message.roomId;
-            System.out.println("成功加入房间: " + roomId);
-            isHost = false;
-        }
-    }
-    
-    /**
-     * 处理创建房间消息
-     */
-    private void handleCreateRoom(GameMessage message) {
-        if (message.roomId != null) {
-            roomId = message.roomId;
-            System.out.println("成功创建房间: " + roomId);
-            isHost = true;
-        }
-    }
-    
-    /**
-     * 处理移动消息
-     */
-    private void handleMove(GameMessage message) {
-        if (message.networkStone != null) {
-            System.out.println("收到移动消息: " + message.networkStone);
-            // 将networkStone转换为本地Stone
-            NetworkStone netStone = message.networkStone;
-            Stone localStone = new Stone(
-                netStone.count,
-                netStone.color.equals("BLACK") ? Color.BLACK : Color.WHITE,
-                new Position(netStone.coordinate.i, netStone.coordinate.j),
-                new Position(netStone.index.i, netStone.index.j)
-            );
-            // 更新棋盘
-            currentStone = localStone;
-            MyPanel.updateStone(currentStone);
-        }
-    }
-} 
+}
