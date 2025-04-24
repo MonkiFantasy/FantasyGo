@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 
 public class MyPanel extends JPanel {
     public static final int X = Config.X;//棋盘左上角顶点x坐标
@@ -42,10 +43,12 @@ public class MyPanel extends JPanel {
     private JButton menu;
     private  JButton musicPlayer;
     private JButton saveSGF;
+    private JButton situationJudgment; // 新增形势判断按钮
     private JPanel textPanel;
     private static JTextArea text;
     private Clip clip;
     private JFrame myFrame;
+    private boolean showSituation = false; // 控制是否显示形势判断
 
 
     public MyPanel(JFrame frame) {
@@ -72,10 +75,26 @@ public class MyPanel extends JPanel {
         myPaint.drawLines(g);
         myPaint.drawIndex(g);
         myPaint.drawStars(g);
+        
+        // 如果启用了形势判断，则绘制形势
+        if (showSituation) {
+            // 绘制领地和死子标记
+            for (int i = 1; i <= Config.PATH; i++) {
+                for (int j = 1; j <= Config.PATH; j++) {
+                    Position position = Calculator.getCoordinateViaIndex(j, i);
+                    Color territoryColor = com.monki.util.PositionEvaluator.getTerritoryColor(i, j);
+                    if (territoryColor != null) {
+                        g.setColor(territoryColor);
+                        g.fillRect(position.getI() - Config.SPACE/2, position.getJ() - Config.SPACE/2, 
+                                  Config.SPACE, Config.SPACE);
+                    }
+                }
+            }
+        }
+        
         //实现落子提示效果
         if (mouseOn != null) {
             g.setColor(Color.RED);
-
             g.fillRect(mouseOn.getI() - Config.SPACE / 4, mouseOn.getJ() - Config.SPACE / 4, SPACE/2, SPACE/2);
         }
         //落子实现
@@ -468,10 +487,16 @@ public class MyPanel extends JPanel {
         musicPlayer.setBounds(X + SPACE +LENGTH, Y+SPACE*2, SPACE * 5, (int) (SPACE*1.2));
         saveSGF = new MyButton("保存棋谱");
         saveSGF.setBounds(X + SPACE +LENGTH+SPACE*6, Y, SPACE * 5, (int)(SPACE*1.2));
+        
+        // 初始化形势判断按钮
+        situationJudgment = new MyButton("形势判断");
+        situationJudgment.setBounds(X + SPACE + LENGTH + SPACE*6, Y+SPACE*2, SPACE * 5, (int)(SPACE*1.2));
+        
         setDoubleBuffered(true);
         add(menu);
         add(musicPlayer);
         add(saveSGF);
+        add(situationJudgment); // 添加形势判断按钮
         textPanel.add(text);
         add(textPanel);
         setVisible(true);
@@ -577,6 +602,47 @@ public class MyPanel extends JPanel {
                 }
 
 
+            }
+        });
+        
+        // 添加形势判断按钮的事件监听器
+        situationJudgment.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // 切换形势判断显示状态
+                showSituation = !showSituation;
+                
+                if (showSituation) {
+                    // 获取形势评估结果
+                    Map<String, Object> result = com.monki.util.PositionEvaluator.evaluatePosition();
+                    
+                    // 显示评估结果
+                    double scoreDiff = (double) result.get("scoreDiff");
+                    int blackTerritory = (int) result.get("blackTerritory");
+                    int whiteTerritory = (int) result.get("whiteTerritory");
+                    int blackCaptures = (int) result.get("blackCaptures");
+                    int whiteCaptures = (int) result.get("whiteCaptures");
+                    
+                    // 更新文本显示
+                    text.setText(String.format(
+                        "黑方领地：%d 目\n白方领地：%d 目\n" +
+                        "黑方提子：%d 子\n白方提子：%d 子\n" +
+                        "得分差：%.2f 目\n%s",
+                        blackTerritory, whiteTerritory, 
+                        blackCaptures, whiteCaptures, 
+                        scoreDiff,
+                        scoreDiff > 0 ? "黑方领先" : "白方领先"
+                    ));
+                    
+                    situationJudgment.setText("关闭形势判断");
+                } else {
+                    // 恢复原始显示
+                    text.setText("请" + (turn == -1 ? "黑" : "白") + "方落子 当前手数：" + count);
+                    situationJudgment.setText("形势判断");
+                }
+                
+                // 重绘棋盘以显示或隐藏形势判断
+                repaint();
             }
         });
     }

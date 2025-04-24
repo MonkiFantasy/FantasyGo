@@ -496,7 +496,8 @@ public class GoClient implements Runnable {
                     // 使用Swing事件分发线程更新UI，避免等待
                     SwingUtilities.invokeLater(() -> {
                         try {
-                            // 使用updateStone会自动将这个棋子设置为lastStone
+                            // 确保在更新棋盘前设置lastStone
+                            MyPanel.lastStone = localStone;
                             MyPanel.updateStone(localStone);
                             // 仅当面板存在时重绘
                             if (MyFrame.myPanel != null) {

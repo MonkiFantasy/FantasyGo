@@ -18,6 +18,14 @@ public class StoneString implements Serializable {
     public Set<Stone> getStones() {
         return stones;
     }
+    
+    /**
+     * 获取当前棋串的气位置集合
+     * @return 气位置的集合
+     */
+    public Set<Position> getLibertyPos() {
+        return libertyPos;
+    }
 
     public void addStones(Set<Stone> stones) {
 
