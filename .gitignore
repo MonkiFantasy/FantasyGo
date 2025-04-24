@@ -37,3 +37,32 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Java build artifacts
+out/
+build/
+
+# IDE specific files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Cargo specific files
+.cargo-lock
+.fingerprint/
+incremental/
