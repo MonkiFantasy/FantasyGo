@@ -90,3 +90,4 @@ cargo run --release
 - 添加观战功能
 - 实现对局记录和回放功能
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MonkiFantasy/FantasyGo)
