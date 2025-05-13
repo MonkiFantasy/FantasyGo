@@ -34,7 +34,9 @@ public class ConnectPanel extends JPanel {
 
             goClient.createRoom();
             
-            ((MyFrame)parentFrame).switchPanel(MyFrame.connectPanel, MyFrame.myPanel, 1880, 950);
+            Dimension gamePanelSize = MyFrame.getGamePanelSize();
+            ((MyFrame)parentFrame).switchPanel(MyFrame.connectPanel, MyFrame.myPanel, 
+                                               gamePanelSize.width, gamePanelSize.height);
         });
         
         joinRoomBtn.addActionListener(e -> {
@@ -45,7 +47,9 @@ public class ConnectPanel extends JPanel {
             if (roomId != null && !roomId.trim().isEmpty()) {
                 goClient.joinRoom(roomId);
                 
-                ((MyFrame)parentFrame).switchPanel(MyFrame.connectPanel, MyFrame.myPanel, 1880, 950);
+                Dimension gamePanelSize = MyFrame.getGamePanelSize();
+                ((MyFrame)parentFrame).switchPanel(MyFrame.connectPanel, MyFrame.myPanel, 
+                                                   gamePanelSize.width, gamePanelSize.height);
             }
         });
         

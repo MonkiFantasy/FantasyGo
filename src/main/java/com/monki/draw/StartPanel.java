@@ -23,8 +23,10 @@ public class StartPanel extends JPanel {
     private void initListener() {
         offlineButton.addActionListener(e -> {
             Config.MODE = 0;
-            // 使用switchPanel方法切换到游戏面板
-            ((MyFrame)parentFrame).switchPanel(MyFrame.startPanel, MyFrame.myPanel, 1880, 950);
+            // 使用switchPanel方法切换到游戏面板，使用适合屏幕的尺寸
+            Dimension gamePanelSize = MyFrame.getGamePanelSize();
+            ((MyFrame)parentFrame).switchPanel(MyFrame.startPanel, MyFrame.myPanel, 
+                                               gamePanelSize.width, gamePanelSize.height);
         });
         
         onlineButton.addActionListener(e -> {

@@ -11,19 +11,23 @@ import com.monki.entity.Position;
 import com.monki.entity.Stone;
 import com.monki.util.MyLogger;
 import com.monki.socket.GoClient;
-
+import com.monki.util.KataGoRunner;
+import com.monki.util.KataGoEvaluator;
 
 import javax.imageio.ImageIO;
 import javax.sound.sampled.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.BasicStroke;
 import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.FileWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
+import java.io.File;
 
 public class MyPanel extends JPanel {
     public static final int X = Config.X;//棋盘左上角顶点x坐标
@@ -49,16 +53,49 @@ public class MyPanel extends JPanel {
     private Clip clip;
     private JFrame myFrame;
     private boolean showSituation = false; // 控制是否显示形势判断
-
+    private KataGoRunner kataGoRunner;
+    private String lastSgfPath;
+    private File tempDir;
 
     public MyPanel(JFrame frame) {
-        myFrame=frame;
+        myFrame = frame;
         initMusic();
         initPanel();
         initListener();
-
+        
+        // 创建临时目录
+        tempDir = new File(System.getProperty("user.home"), "fantasy_go_temp");
+        if (!tempDir.exists()) {
+            tempDir.mkdirs();
+        }
+        
+        // 初始化KataGo运行器
+        kataGoRunner = new KataGoRunner();
+        try {
+            kataGoRunner.startKataGo();
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.err.println("KataGo启动失败：" + e.getMessage());
+            JOptionPane.showMessageDialog(this, 
+                "KataGo启动失败：" + e.getMessage(), 
+                "错误", 
+                JOptionPane.ERROR_MESSAGE);
+        }
     }
 
+    @Override
+    public void finalize() {
+        if (kataGoRunner != null) {
+            kataGoRunner.stopKataGo();
+        }
+        // 清理临时文件
+        if (tempDir != null && tempDir.exists()) {
+            for (File file : tempDir.listFiles()) {
+                file.delete();
+            }
+            tempDir.delete();
+        }
+    }
 
     @Override
     public void paintComponent(Graphics gh) {
@@ -85,10 +122,26 @@ public class MyPanel extends JPanel {
                     Color territoryColor = com.monki.util.PositionEvaluator.getTerritoryColor(i, j);
                     if (territoryColor != null) {
                         g.setColor(territoryColor);
-                        g.fillRect(position.getI() - Config.SPACE/2, position.getJ() - Config.SPACE/2, 
-                                  Config.SPACE, Config.SPACE);
+                        g.fillRect(position.getI() - Config.SPACE/4, position.getJ() - Config.SPACE/4, 
+                                  Config.SPACE/2, Config.SPACE/2);
                     }
                 }
+            }
+            
+            // 绘制最佳落子点
+            Position bestMove = com.monki.util.PositionEvaluator.getBestMove();
+            if (bestMove != null) {
+                Position bestMoveCoord = Calculator.getCoordinateViaIndex(bestMove.getI(), bestMove.getJ());
+                g.setColor(new Color(0, 255, 0, 180)); // 半透明绿色
+                g.setStroke(new BasicStroke(3.0f)); // 加粗线条
+                g.drawOval(bestMoveCoord.getI() - Config.SPACE/3, bestMoveCoord.getJ() - Config.SPACE/3, 
+                          2*Config.SPACE/3, 2*Config.SPACE/3);
+                
+                // 保存当前画笔颜色和线型
+                Stroke oldStroke = ((Graphics2D)g).getStroke();
+                
+                // 恢复默认线型
+                g.setStroke(oldStroke);
             }
         }
         
@@ -468,30 +521,39 @@ public class MyPanel extends JPanel {
         setLayout(null);
         setBounds(0, 0, 1920, 1080);
         setBackground(Color.gray);
+        
+        // 计算基础位置 - 棋盘右边缘
+        int rightEdgePosition = X + LENGTH + SPACE;
+        
+        // 设置主菜单按钮位置
         menu = new MyButton("主菜单");
-        menu.setBounds(X+LENGTH + SPACE, Y , SPACE * 5, (int) (SPACE*1.2));
+        menu.setBounds(rightEdgePosition, Y, SPACE * 5, (int) (SPACE*1.2));
+        
+        // 设置文本面板位置
         textPanel = new BackgroundPanel("/img/img_1.png");
         textPanel.setToolTipText("15351");
-        //textPanel = new JPanel();
-        //textPanel.setOpaque(true);
         textPanel.setBorder(BorderFactory.createLineBorder(Color.blue));
-        textPanel.setBounds(X + LENGTH+SPACE, Y+SPACE*4, SPACE * 10, SPACE*12);
+        textPanel.setBounds(rightEdgePosition, Y+SPACE*4, SPACE * 10, SPACE*12);
+        
+        // 设置文本区域
         text = new JTextArea();
-        //text.setBounds(X + LENGTH+SPACE, Y+SPACE*4, SPACE * 10, SPACE*12);
-        //透明背景
         text.setBackground(new Color(0, 0, 0, 0));
-        //text.setOpaque(true);
         text.setText("执黑先行");
         text.setFont(new Font("宋体", Font.BOLD, 20));
+        
+        // 设置音乐播放按钮位置
         musicPlayer = new MyButton("背景音乐：关");
-        musicPlayer.setBounds(X + SPACE +LENGTH, Y+SPACE*2, SPACE * 5, (int) (SPACE*1.2));
+        musicPlayer.setBounds(rightEdgePosition, Y+SPACE*2, SPACE * 5, (int) (SPACE*1.2));
+        
+        // 设置保存棋谱按钮位置
         saveSGF = new MyButton("保存棋谱");
-        saveSGF.setBounds(X + SPACE +LENGTH+SPACE*6, Y, SPACE * 5, (int)(SPACE*1.2));
+        saveSGF.setBounds(rightEdgePosition + SPACE*6, Y, SPACE * 5, (int)(SPACE*1.2));
         
-        // 初始化形势判断按钮
+        // 设置形势判断按钮位置
         situationJudgment = new MyButton("形势判断");
-        situationJudgment.setBounds(X + SPACE + LENGTH + SPACE*6, Y+SPACE*2, SPACE * 5, (int)(SPACE*1.2));
+        situationJudgment.setBounds(rightEdgePosition + SPACE*6, Y+SPACE*2, SPACE * 5, (int)(SPACE*1.2));
         
+        // 添加组件
         setDoubleBuffered(true);
         add(menu);
         add(musicPlayer);
@@ -546,9 +608,11 @@ public class MyPanel extends JPanel {
                 if(Config.GAMESTATUS==1){
                     new ConfirmDialog("棋局尚未结束，确定要退出吗？", event -> {
                         clearBoardState();
+                        // 返回主菜单，窗口尺寸恢复为500x500
                         ((MyFrame)myFrame).switchPanel(MyFrame.myPanel, MyFrame.startPanel, 500, 500);
                     });
                 } else {
+                    // 返回主菜单，窗口尺寸恢复为500x500
                     ((MyFrame)myFrame).switchPanel(MyFrame.myPanel, MyFrame.startPanel, 500, 500);
                 }
             }
@@ -613,6 +677,9 @@ public class MyPanel extends JPanel {
                 showSituation = !showSituation;
                 
                 if (showSituation) {
+                    // 使用KataGo分析当前局面
+                    analyzeWithKataGo();
+                    
                     // 获取形势评估结果
                     Map<String, Object> result = com.monki.util.PositionEvaluator.evaluatePosition();
                     
@@ -622,12 +689,19 @@ public class MyPanel extends JPanel {
                     int whiteTerritory = (int) result.get("whiteTerritory");
                     int blackCaptures = (int) result.get("blackCaptures");
                     int whiteCaptures = (int) result.get("whiteCaptures");
+                    double whiteWinrate = (double) result.get("whiteWinrate");
+                    double whiteLead = (double) result.get("whiteLead");
                     
                     // 更新文本显示
                     text.setText(String.format(
+                        "KataGo评估：\n" +
+                        "胜率：白%.1f%% 黑%.1f%%\n" +
+                        "目差：%.1f目\n\n" +
                         "黑方领地：%d 目\n白方领地：%d 目\n" +
                         "黑方提子：%d 子\n白方提子：%d 子\n" +
                         "得分差：%.2f 目\n%s",
+                        whiteWinrate * 100, (1 - whiteWinrate) * 100,
+                        whiteLead,
                         blackTerritory, whiteTerritory, 
                         blackCaptures, whiteCaptures, 
                         scoreDiff,
@@ -688,5 +762,53 @@ public class MyPanel extends JPanel {
         
         // 重绘棋盘
         repaint();
+    }
+
+    private void analyzeWithKataGo() {
+        try {
+            // 生成临时SGF文件
+            StringBuilder sb = new StringBuilder();
+            sb.append("(;GM[1]FF[4]CA[UTF-8]SZ[19];\n");
+            for (Stone stone : fallOn) {
+                if (!stone.getRemoved()) {  // 只保存未被提走的棋子
+                    if (stone.getColor().equals(Color.BLACK)) {
+                        sb.append("B[");
+                        sb.append(Calculator.getAlphaIndex(stone.getIndex()));
+                        sb.append("]");
+                    } else if (stone.getColor().equals(Color.WHITE)) {
+                        sb.append("W[");
+                        sb.append(Calculator.getAlphaIndex(stone.getIndex()));
+                        sb.append("]");
+                    }
+                    if(stone.getCount() != fallOn.size()) {
+                        sb.append(";");
+                    }
+                }
+            }
+            sb.append(")");
+
+            // 保存SGF文件
+            lastSgfPath = new File(tempDir, "temp_analysis.sgf").getAbsolutePath();
+            try (FileWriter writer = new FileWriter(lastSgfPath)) {
+                writer.write(sb.toString());
+            }
+
+            // 使用KataGo分析
+            String analysis = kataGoRunner.analyzeSgf(lastSgfPath);
+            if (analysis != null) {
+                // 处理分析结果
+                KataGoEvaluator.processKataGoOutput(analysis);
+            } else {
+                throw new Exception("KataGo返回空结果");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.err.println("KataGo分析失败：" + e.getMessage());
+            JOptionPane.showMessageDialog(this, 
+                "KataGo分析失败：" + e.getMessage(), 
+                "错误", 
+                JOptionPane.ERROR_MESSAGE);
+        }
     }
 }
